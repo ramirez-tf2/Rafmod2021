@@ -1,3 +1,8 @@
 #Ignore everything in _how_to_build except for .sh files
 _how_to_build/*
 !_how_to_build/*.sh
+
+#Ignore the entire /build folder.
+build/*
+
+
