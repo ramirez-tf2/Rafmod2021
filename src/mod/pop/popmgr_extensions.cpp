@@ -5250,9 +5250,9 @@ namespace Mod::Pop::PopMgr_Extensions
 					Parse_ForceItem(subkey, state.m_ForceItems, false);
 				} else if (FStrEq(name, "ForceItemNoRemove")) {
 					Parse_ForceItem(subkey, state.m_ForceItems, true);
-				} else if (FStrEq(name, "ExtendedUpgrades")) {
+				}/* else if (FStrEq(name, "ExtendedUpgrades")) {
 					Mod::MvM::Extended_Upgrades::Parse_ExtendedUpgrades(subkey);
-				} else if (FStrEq(name, "SpawnTemplate")) {
+				}*/ else if (FStrEq(name, "SpawnTemplate")) {
 					auto templ_info = Parse_SpawnTemplate(subkey);
 					if (templ_info.templ == nullptr)
 					{

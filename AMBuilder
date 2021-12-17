@@ -205,9 +205,9 @@ sourceFiles += [
   'src/mod/mvm/weapon_antigrief.cpp',
   'src/mod/mvm/weapon_balancing.cpp',
   'src/mod/mvm/yer_unnerf.cpp',
-  'src/mod/mvm/upgrade_disallow.cpp',
+#  'src/mod/mvm/upgrade_disallow.cpp',
   'src/mod/mvm/red_robot_eye_glow.cpp',
-  'src/mod/mvm/extended_upgrades.cpp',
+#  'src/mod/mvm/extended_upgrades.cpp',
   'src/mod/mvm/teleporter_aggro.cpp',
   'src/mod/mvm/refund_usermsg_overflow_fix.cpp',
   
