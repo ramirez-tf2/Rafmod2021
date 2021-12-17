@@ -6,7 +6,7 @@ sudo apt-get update
 sudo apt-get install autoconf git python3-setuptools libtool nasm libiberty-dev:i386 libelf-dev:i386 libboost-dev:i386 libbsd-dev:i386 libunwind-dev:i386 lib32stdc++-7-dev lib32z1-dev libc6-dev-i386 linux-libc-dev:i386 -y
 
 #Install g++-9:
-sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
 sudo apt-get update
 sudo apt-get install gcc-9 g++-9 g++-9-multilib -y
 
