@@ -1,6 +1,6 @@
 #!/bin/bash
 
-PATHS="--hl2sdk-root=../_how_to_build --mms-path=../_how_to_build/mmsource-1.10 --sm-path=../_how_to_build/sourcemod"
+PATHS="--hl2sdk-root=../build_scripts --mms-path=../build_scripts/mmsource-1.10 --sm-path=../build_scripts/sourcemod"
 
 cd ..
 mkdir build
