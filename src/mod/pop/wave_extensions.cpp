@@ -544,6 +544,11 @@ namespace Mod::Pop::Wave_Extensions
 
 			if (wavespawn == nullptr) continue;
 
+			// Request by Ciaran: Ignore wavespawns whose names begin with "fakewavespawn" (necessary for fake waves to autocomplete and not hang up indefinitely).
+			const char *ws_name = wavespawn->m_name.Get();
+			if (strstr(ws_name, "fakewavespawn") == ws_name)		// str.startswith
+				continue;
+
 			wavespawn->extra = new CWaveSpawnExtra();
 
 			if (!wavespawn->m_waitForAllSpawned.IsEmpty()) {
