@@ -1,6 +1,7 @@
+#!/usr/bin/env python
 # reStructuredText (RST) to GitHub-flavored Markdown converter
 
-import re
+import re, sys
 from docutils import core, nodes, writers
 
 
@@ -35,6 +36,9 @@ class Translator(nodes.NodeVisitor):
         self.version = re.match(r'(\d+\.\d+\.\d+).*', node.children[0]).group(1)
         raise nodes.SkipChildren
 
+    def visit_title_reference(self, node):
+        raise Exception(node)
+
     def depart_title(self, node):
         pass
 
@@ -61,7 +65,7 @@ class Translator(nodes.NodeVisitor):
         self.write('\n\n')
 
     def visit_paragraph(self, node):
-        pass
+        self.write('\n\n')
 
     def depart_paragraph(self, node):
         pass
@@ -149,3 +153,7 @@ class MDWriter(writers.Writer):
 def convert(rst_path):
     """Converts RST file to Markdown."""
     return core.publish_file(source_path=rst_path, writer=MDWriter())
+
+
+if __name__ == '__main__':
+    convert(sys.argv[1])

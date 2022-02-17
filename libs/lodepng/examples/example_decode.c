@@ -36,10 +36,9 @@ freely, subject to the following restrictions:
 Example 1
 Decode from disk to raw pixels with a single function call
 */
-void decodeOneStep(const char* filename)
-{
+void decodeOneStep(const char* filename) {
   unsigned error;
-  unsigned char* image;
+  unsigned char* image = 0;
   unsigned width, height;
 
   error = lodepng_decode32_file(&image, &width, &height, filename);
@@ -54,10 +53,9 @@ void decodeOneStep(const char* filename)
 Example 2
 Load PNG file from disk to memory first, then decode to raw pixels in memory.
 */
-void decodeTwoSteps(const char* filename)
-{
+void decodeTwoSteps(const char* filename) {
   unsigned error;
-  unsigned char* image;
+  unsigned char* image = 0;
   unsigned width, height;
   unsigned char* png = 0;
   size_t pngsize;
@@ -77,10 +75,9 @@ void decodeTwoSteps(const char* filename)
 Example 3
 Load PNG file from disk using a State, normally needed for more advanced usage.
 */
-void decodeWithState(const char* filename)
-{
+void decodeWithState(const char* filename) {
   unsigned error;
-  unsigned char* image;
+  unsigned char* image = 0;
   unsigned width, height;
   unsigned char* png = 0;
   size_t pngsize;
@@ -102,8 +99,7 @@ void decodeWithState(const char* filename)
   free(image);
 }
 
-int main(int argc, char *argv[])
-{
+int main(int argc, char *argv[]) {
   const char* filename = argc > 1 ? argv[1] : "test.png";
 
   decodeOneStep(filename);

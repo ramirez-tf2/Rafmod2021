@@ -47,7 +47,6 @@ namespace Mod::Pop::Wave_Extensions
 
 namespace Mod::Pop::PopMgr_Extensions
 {
-	
 	int iGetTeamAssignmentOverride = 6;
 	#if defined _LINUX
 
@@ -529,6 +528,15 @@ namespace Mod::Pop::PopMgr_Extensions
 		bool allow_refund = false;
 	};
 
+	struct BuildingPointTemplateInfo
+	{
+		PointTemplateInfo info;
+		int building_type = OBJ_SENTRYGUN;
+		int building_mode = 0;
+		bool allow_bots = false;
+		std::unique_ptr<ItemListEntry> entry;
+	};
+
 	struct PopState
 	{
 		PopState() :
@@ -605,8 +613,9 @@ namespace Mod::Pop::PopMgr_Extensions
 			m_Accelerate                      ("sv_accelerate"),
 			m_TurboPhysics                    ("sv_turbophysics"),
 			m_UpgradeStationRegenCreators     ("sig_mvm_upgradestation_creators"),
-			m_UpgradeStationRegen             ("sig_mvm_upgradestation_regen_improved")
-
+			m_UpgradeStationRegen             ("sig_mvm_upgradestation_regen_improved"),
+			m_AllowBluePlayerReanimators      ("sig_mvm_jointeam_blue_allow_revive")
+			
 		{
 			this->Reset();
 		}
@@ -739,6 +748,7 @@ namespace Mod::Pop::PopMgr_Extensions
 			this->m_TurboPhysics.Reset();
 			this->m_UpgradeStationRegenCreators.Reset();
 			this->m_UpgradeStationRegen.Reset();
+			this->m_AllowBluePlayerReanimators.Reset();
 			
 			this->m_CustomUpgradesFile.Reset();
 			this->m_TextPrintSpeed.Reset();
@@ -807,6 +817,13 @@ namespace Mod::Pop::PopMgr_Extensions
 
 			this->m_CustomNavFile = "";
 			this->m_LastMissionName = "";
+
+			for (auto &val : this->m_HandModelOverride) {
+				val = "";
+			}
+
+			this->m_ParticleOverride.clear();
+			this->m_BuildingPointTemplates.clear();
 		}
 		
 		bool  m_bGiantsDropRareSpells;
@@ -937,6 +954,7 @@ namespace Mod::Pop::PopMgr_Extensions
 		CPopOverride_ConVar<bool> m_TurboPhysics;
 		CPopOverride_ConVar<bool> m_UpgradeStationRegenCreators;
 		CPopOverride_ConVar<bool> m_UpgradeStationRegen;
+		CPopOverride_ConVar<bool> m_AllowBluePlayerReanimators;
 		
 		
 		//CPopOverride_CustomUpgradesFile m_CustomUpgradesFile;
@@ -1000,6 +1018,12 @@ namespace Mod::Pop::PopMgr_Extensions
 
 		std::string m_CustomNavFile;
 		std::string m_LastMissionName;
+		
+		std::string m_HandModelOverride[11];
+
+		std::unordered_map<std::string, std::string> m_ParticleOverride;
+
+		std::vector<BuildingPointTemplateInfo> m_BuildingPointTemplates;
 	};
 	PopState state;
 	
@@ -1490,7 +1514,7 @@ namespace Mod::Pop::PopMgr_Extensions
 			/* only enforce the whitelist/blacklist if they are non-empty */
 
 			if (!state.m_ItemWhitelist.empty()) {
-				const char *classname = result->GetItemDefinition()->GetKeyValues()->GetString("item_class");
+				const char *classname = TranslateWeaponEntForClass_improved(result->GetItemDefinition()->GetKeyValues()->GetString("item_class"), pclass);
 				bool found = false;
 				for (const auto& entry : state.m_ItemWhitelist) {
 					if (entry->Matches(classname, result)) {
@@ -1502,7 +1526,7 @@ namespace Mod::Pop::PopMgr_Extensions
 					result = TFInventoryManager()->GetBaseItemForClass(pclass, slot);
 					if (result != nullptr && result->GetItemDefinition() != nullptr) {
 						found = false;
-						classname = result->GetItemDefinition()->GetKeyValues()->GetString("item_class");
+						classname = TranslateWeaponEntForClass_improved(result->GetItemDefinition()->GetKeyValues()->GetString("item_class"), pclass);
 						for (const auto& entry : state.m_ItemWhitelist) {
 							if (entry->Matches(classname, result)) {
 								found = true;
@@ -1518,7 +1542,7 @@ namespace Mod::Pop::PopMgr_Extensions
 			}
 			
 			if (!state.m_ItemBlacklist.empty()) {
-				const char *classname = result->GetItemDefinition()->GetKeyValues()->GetString("item_class");
+				const char *classname = TranslateWeaponEntForClass_improved(result->GetItemDefinition()->GetKeyValues()->GetString("item_class"), pclass);
 				bool found = false;
 				for (const auto& entry : state.m_ItemBlacklist) {
 					if (entry->Matches(classname, result)) {
@@ -1530,7 +1554,7 @@ namespace Mod::Pop::PopMgr_Extensions
 					result = TFInventoryManager()->GetBaseItemForClass(pclass, slot);
 					if (result != nullptr && result->GetItemDefinition() != nullptr) {
 						found = false;
-						classname = result->GetItemDefinition()->GetKeyValues()->GetString("item_class");
+						classname = TranslateWeaponEntForClass_improved(result->GetItemDefinition()->GetKeyValues()->GetString("item_class"), pclass);
 						for (const auto& entry : state.m_ItemBlacklist) {
 							if (entry->Matches(classname, result)) {
 								found = true;
@@ -1614,6 +1638,13 @@ namespace Mod::Pop::PopMgr_Extensions
 		}
 		CBaseEntity *entity = DETOUR_MEMBER_CALL(CTFPlayer_GiveNamedItem)(classname, i1, item_view, b1);
 
+		// Loadout replacement items need to be validated manually
+		if (entity != nullptr && !is_item_replacement.empty()) {
+			auto econ = rtti_cast<CEconEntity *>(entity);
+			if (econ != nullptr && is_item_replacement.count(econ->GetItem()->GetItemDefinition()) != 0) {
+				econ->Validate();
+			}
+		}
 		return entity;
 	}
 
@@ -1732,6 +1763,7 @@ namespace Mod::Pop::PopMgr_Extensions
 	}
 	
 	bool rc_CTeamplayRoundBasedRules_State_Enter = false;
+	bool last_game_was_win = false;
 	DETOUR_DECL_MEMBER(void, CTeamplayRoundBasedRules_State_Enter, gamerules_roundstate_t newState)
 	{
 		/* the CTeamplayRoundBasedRules ctor calls State_Enter BEFORE the CTFGameRules ctor has had a chance to run yet
@@ -1739,6 +1771,7 @@ namespace Mod::Pop::PopMgr_Extensions
 		 
 
 		DevMsg("StateEnter %d\n", newState);
+		bool startBonusTimer = false;
 		if (rc_CTFGameRules_ctor <= 0) {
 			
 			DevMsg("Round state team win %d\n", TFGameRules()->GetWinningTeam());
@@ -1757,13 +1790,33 @@ namespace Mod::Pop::PopMgr_Extensions
 				
 				CWave *wave = g_pPopulationManager->GetCurrentWave();
 				
+				ForEachTFBot([&](CTFBot *bot){
+					if (bot->GetTeamNumber() != TEAM_SPECTATOR) {
+						bot->CommitSuicide();
+						bot->ForceChangeTeam(TEAM_SPECTATOR, true);
+					}
+				});
+
+				// Distribute cash from packs
+				int packsCurrency = TFObjectiveResource()->m_nMvMWorldMoney;
+				
+				for (int i = 0; i < ICurrencyPackAutoList::AutoList().Count(); ++i) {
+					auto pack = rtti_cast<CCurrencyPack *>(ICurrencyPackAutoList::AutoList()[i]);
+					if (pack == nullptr) continue;
+					pack->SetDistributed(true);
+				}
+				TFObjectiveResource()->m_nMvMWorldMoney = 0;
+				TFGameRules()->DistributeCurrencyAmount( packsCurrency, NULL, true, false, false );
+
+				// Distribute cash from unspawned packs
 				int unallocatedCurrency = 0;
 				FOR_EACH_VEC(wave->m_WaveSpawns, i) {
 					CWaveSpawnPopulator *wavespawn = wave->m_WaveSpawns[i];
-					unallocatedCurrency += *(int*)((uintptr_t)wavespawn + 0x494);
+					if (wavespawn->m_unallocatedCurrency != -1) {
+						unallocatedCurrency += wavespawn->m_unallocatedCurrency;
+					}
 				}
 				TFGameRules()->DistributeCurrencyAmount( unallocatedCurrency, NULL, true, true, false );
-				// TODO(?): find all TFBots not on TEAM_SPECTATOR and switch them to TEAM_SPECTATOR
 				
 				/* call this twice to ensure all wavespawns get to state DONE */
 				ConColorMsg(Color(0xff, 0xff, 0x00, 0xff), "PRE  CWave::ForceFinish\n");
@@ -1781,25 +1834,31 @@ namespace Mod::Pop::PopMgr_Extensions
 				ConColorMsg(Color(0xff, 0xff, 0x00, 0xff), "PRE  CWave::WaveCompleteUpdate\n");
 				wave->WaveCompleteUpdate();
 				ConColorMsg(Color(0xff, 0xff, 0x00, 0xff), "POST CWave::WaveCompleteUpdate\n");
-
+				startBonusTimer = true;
+				last_game_was_win = true;
 				if ( wave_pre == TFObjectiveResource()->m_nMannVsMachineMaxWaveCount) {
 				//TFGameRules()->SetForceMapReset(true);
 				// TODO(?): for all human players on TF_TEAM_BLUE: if !IsAlive(), then call ForceRespawn()
-				
+
 					return;
 				}
 			}
 		}
 		
 		DETOUR_MEMBER_CALL(CTeamplayRoundBasedRules_State_Enter)(newState);
+
+		if (startBonusTimer) {
+			g_pPopulationManager->GetCurrentWave()->m_GetUpgradesAlertTimer.Start(3.0f);
+		}
 		rc_CTeamplayRoundBasedRules_State_Enter = false;
 	}
 	DETOUR_DECL_MEMBER(void, CMannVsMachineStats_RoundEvent_WaveEnd, bool success)
 	{
 		DevMsg("Wave end team win %d\n", TFGameRules()->GetWinningTeam());
-		if (state.m_bReverseWinConditions && TFGameRules()->GetWinningTeam() != TF_TEAM_RED) {
+		if (state.m_bReverseWinConditions && last_game_was_win) {
 			DevMsg("State_Enter %d\n", rc_CTeamplayRoundBasedRules_State_Enter);
 			DETOUR_MEMBER_CALL(CMannVsMachineStats_RoundEvent_WaveEnd)(true);
+			
 			return;
 		}
 		DETOUR_MEMBER_CALL(CMannVsMachineStats_RoundEvent_WaveEnd)(success);
@@ -1990,7 +2049,7 @@ namespace Mod::Pop::PopMgr_Extensions
 				auto attr_def = GetItemSchema()->GetAttributeDefinitionByName(it->first.c_str());
 				if (attr_def != nullptr) {
 					player->GetAttributeList()->SetRuntimeAttributeValue(attr_def, it->second);
-					player->TeamFortress_CalculateMaxSpeed();
+					player->TeamFortress_SetSpeed();
 				}
 			}
 		}
@@ -2001,7 +2060,7 @@ namespace Mod::Pop::PopMgr_Extensions
 				auto attr_def = GetItemSchema()->GetAttributeDefinitionByName(it->first.c_str());
 				if (attr_def != nullptr) {
 					player->GetAttributeList()->SetRuntimeAttributeValue(attr_def, it->second);
-					player->TeamFortress_CalculateMaxSpeed();
+					player->TeamFortress_SetSpeed();
 				}
 			}
 		}
@@ -2133,7 +2192,9 @@ namespace Mod::Pop::PopMgr_Extensions
 				player->SetModelScale(miniboss_scale.GetFloat());
 			}
 
-			if(player->GetPlayerClass()->GetClassIndex() != TF_CLASS_UNDEFINED && !state.m_PlayerUpgradeSend.count(player)) {
+			if (player->GetPlayerClass()->GetClassIndex() != TF_CLASS_UNDEFINED && !state.m_PlayerUpgradeSend.count(player) && 
+					(strcmp(TFGameRules()->GetCustomUpgradesFile(), "") != 0 && strcmp(TFGameRules()->GetCustomUpgradesFile(), "scripts/items/mvm_upgrades.txt") != 0)) {
+
 				state.m_PlayerUpgradeSend.insert(player);
 				ResendUpgradeFile(false);
 				if (!received_message_tick) {
@@ -2154,6 +2215,56 @@ namespace Mod::Pop::PopMgr_Extensions
 		}
 	}
 
+	/*DETOUR_DECL_MEMBER(void, CTFWeaponBase_UpdateHands)
+	{
+		DETOUR_MEMBER_CALL(CTFWeaponBase_UpdateHands)();
+		auto weapon = reinterpret_cast<CTFWeaponBase *>(this);
+		auto owner = weapon->GetTFPlayerOwner();
+		if (owner != nullptr && state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()] != 0) {
+			auto viewModel = owner->GetViewModel();
+			if (viewModel != nullptr) {
+				DevMsg("Indexes pre %d %d %d\n", weapon->m_iViewModelIndex + 0, weapon->GetModelIndex(), viewModel->GetModelIndex());
+				weapon->SetModelIndex(state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()]);
+				weapon->m_iViewModelIndex = state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()];
+				viewModel->SetModelIndex(state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()]);
+				for(int i = 0; i < MAX_VISION_MODES; i++) {
+					weapon->SetModelIndexOverride(i, state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()]);
+					viewModel->SetModelIndexOverride(i, state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()]);
+				}
+			}
+		}
+	}
+
+	DETOUR_DECL_MEMBER(void, CBaseCombatWeapon_SetViewModel)
+	{
+		DETOUR_MEMBER_CALL(CBaseCombatWeapon_SetViewModel)();
+		auto weapon = reinterpret_cast<CTFWeaponBase *>(this);
+		auto owner = weapon->GetTFPlayerOwner();
+		if (owner != nullptr && state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()] != 0) {
+			auto viewModel = owner->GetViewModel();
+			if (viewModel != nullptr) {
+				DevMsg("Indexes pre %d %d %d\n", weapon->m_iViewModelIndex + 0, weapon->GetModelIndex(), viewModel->GetModelIndex());
+				weapon->SetModelIndex(state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()]);
+				weapon->m_iViewModelIndex = state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()];
+				viewModel->SetModelIndex(state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()]);
+				for(int i = 0; i < MAX_VISION_MODES; i++) {
+					weapon->SetModelIndexOverride(i, state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()]);
+					viewModel->SetModelIndexOverride(i, state.m_HandModelOverride[owner->GetPlayerClass()->GetClassIndex()]);
+				}
+			}
+		}
+	}*/
+
+	DETOUR_DECL_MEMBER(const char *, CTFPlayerClassShared_GetHandModelName, int handIndex)
+	{
+		auto shared = reinterpret_cast<CTFPlayerClassShared *>(this);
+		if (!state.m_HandModelOverride[shared->GetClassIndex()].empty()) {
+			return state.m_HandModelOverride[shared->GetClassIndex()].c_str();
+		}
+		return DETOUR_MEMBER_CALL(CTFPlayerClassShared_GetHandModelName)(handIndex);
+	}
+
+	
 	RefCount rc_CTFPlayer_Event_Killed;
 	DETOUR_DECL_MEMBER(void, CTFPlayer_Event_Killed, const CTakeDamageInfo& info)
 	{
@@ -2287,17 +2398,30 @@ namespace Mod::Pop::PopMgr_Extensions
 		return ret;
 	}*/
 	
-	DETOUR_DECL_MEMBER(bool, IVision_IsAbleToSee2, CBaseEntity *ent, IVision::FieldOfViewCheckType fov, Vector *vec)
+	DETOUR_DECL_MEMBER(bool, CTFBotVision_IsIgnored, CBaseEntity *ent)
 	{
-		bool ret = DETOUR_MEMBER_CALL(IVision_IsAbleToSee2)(ent,fov, vec);
+		bool ret = DETOUR_MEMBER_CALL(CTFBotVision_IsIgnored)(ent);
 
-		if (ret && ent != nullptr) {
+		if (!ret && ent != nullptr && ent->IsBaseObject()) {
 			CTFBot *bot = ToTFBot(reinterpret_cast<IVision *>(this)->GetBot()->GetEntity());
-			if (bot != nullptr && bot->IsPlayerClass(TF_CLASS_SPY) && ent->IsBaseObject() && (ent->GetMoveParent() != nullptr || (state.m_bSpyNoSapUnownedBuildings && ToBaseObject(ent)->GetBuilder() == nullptr))) {
-				return false;
+			if (bot != nullptr && bot->IsPlayerClass(TF_CLASS_SPY) && (ent->GetMoveParent() != nullptr || (state.m_bSpyNoSapUnownedBuildings && ToBaseObject(ent)->GetBuilder() == nullptr))) {
+				return true;
 			}
 		}
 		return ret;
+	}
+
+
+	DETOUR_DECL_MEMBER(ActionResult<CTFBot>, CTFBotSpyInfiltrate_Update, CTFBot *me, float interval)
+	{
+		if (me->m_enemySentry != nullptr)
+		{
+			auto obj = ToBaseObject(me->m_enemySentry);
+			if (obj->GetMoveParent() != nullptr || (state.m_bSpyNoSapUnownedBuildings && obj->GetBuilder() == nullptr)) {
+				me->m_enemySentry = nullptr;
+			}
+		}
+		return DETOUR_MEMBER_CALL(CTFBotSpyInfiltrate_Update)(me,interval);
 	}
 
 	DETOUR_DECL_MEMBER(void, CPopulationManager_AdjustMinPlayerSpawnTime)
@@ -2316,10 +2440,16 @@ namespace Mod::Pop::PopMgr_Extensions
 	{
 		auto mgr = reinterpret_cast<IGameEventManager2 *>(this);
 		
-		if (event != nullptr && strcmp(event->GetName(), "player_death") && (event->GetInt( "death_flags" ) & 0x0200 /*TF_DEATH_MINIBOSS*/) == 0) {
+		if (event != nullptr && strcmp(event->GetName(), "player_death") == 0 && (event->GetInt( "death_flags" ) & 0x0200 /*TF_DEATH_MINIBOSS*/) == 0) {
 			auto player = UTIL_PlayerByUserId(event->GetInt("userid"));
 			if (player != nullptr && player->GetTeamNumber() == TF_TEAM_BLUE && (!player->IsBot() || state.m_bDisplayRobotDeathNotice) )
 				event->SetInt("death_flags", (event->GetInt( "death_flags" ) | 0x0200));
+		}
+
+		if (event != nullptr && last_game_was_win && strcmp(event->GetName(), "mvm_wave_failed") == 0) {
+			last_game_was_win = false;
+			mgr->FreeEvent(event);
+			return false;
 		}
 		
 		return DETOUR_MEMBER_CALL(IGameEventManager2_FireEvent)(event, bDontBroadcast);
@@ -3438,7 +3568,7 @@ namespace Mod::Pop::PopMgr_Extensions
 
 			if (id == item.class_index || item.class_index == 0) {
 				char buf[256];
-				snprintf(buf, sizeof(buf), "%s: %s", g_szLoadoutStrings[item.loadout_slot], item.name.c_str());
+				snprintf(buf, sizeof(buf), "%s: %s", loadoutStrings[item.loadout_slot], item.name.c_str());
 				ItemDrawInfo info1(buf, ITEMDRAW_DISABLED);
 				menu->AppendItem("", info1);
 			}
@@ -3524,7 +3654,7 @@ namespace Mod::Pop::PopMgr_Extensions
 				}
 
 				char buf[256];
-				snprintf(buf, sizeof(buf), "%s: %s %s %s", g_szLoadoutStrings[item.loadout_slot], item.name.c_str(), cost, selected ? "(selected)" : "");
+				snprintf(buf, sizeof(buf), "%s: %s %s %s", loadoutStrings[item.loadout_slot], item.name.c_str(), cost, selected ? "(selected)" : "");
 				ItemDrawInfo info1(buf, ITEMDRAW_DEFAULT);
 				std::string num = std::to_string(i);
 				menu->AppendItem(num.c_str(), info1);
@@ -3626,11 +3756,11 @@ namespace Mod::Pop::PopMgr_Extensions
 			}
 			if (strncmp(p, "!missioninfo",len) == 0 || strncmp(p, "/missioninfo",len) == 0) {
 				DisplayMainMissionInfo(ToTFPlayer(entity));
-				return nullptr;
+				return;
 			}
 			if (strncmp(p, "!missionitems",len) == 0 || strncmp(p, "/missionitems",len) == 0) {
 				DisplayExtraLoadoutItemsClass(ToTFPlayer(entity), ToTFPlayer(entity)->GetPlayerClass()->GetClassIndex());
-				return nullptr;
+				return;
 			}
 		}
 		DETOUR_STATIC_CALL(Host_Say)(edict, args, team);
@@ -3891,10 +4021,12 @@ namespace Mod::Pop::PopMgr_Extensions
 	DETOUR_DECL_MEMBER(void, CTFPlayer_DropCurrencyPack, int pack, int amount, bool forcedistribute, CTFPlayer *moneymaker )
 	{
 		int creditTeam = state.m_SetCreditTeam.Get();
-		if (moneymaker != nullptr && moneymaker->IsBot() && ((creditTeam == 0 && moneymaker->GetTeamNumber() == TF_TEAM_BLUE) || (creditTeam != 0 && moneymaker->GetTeamNumber() != state.m_SetCreditTeam.Get()))) {
+		CTFPlayer *player = reinterpret_cast<CTFPlayer *>(this);
+		if (moneymaker != nullptr && moneymaker != nullptr && moneymaker->IsBot() && ((creditTeam == 0 && moneymaker->GetTeamNumber() == TF_TEAM_BLUE) || (creditTeam != 0 && moneymaker->GetTeamNumber() != creditTeam))) {
 			forcedistribute = false;
 			moneymaker = nullptr;
 		}
+
 		DETOUR_MEMBER_CALL(CTFPlayer_DropCurrencyPack)(pack, amount, forcedistribute, moneymaker);
 
 	}
@@ -3929,7 +4061,7 @@ namespace Mod::Pop::PopMgr_Extensions
 			playerItems = playerItemsCheckpoint;
 			
 			for (auto it = playerItemsSelected.begin(); it != playerItemsSelected.end(); ) {
-				if (!playerItems.count(*it)) {
+				if (*it > state.m_ExtraLoadoutItems.size() && state.m_ExtraLoadoutItems[*it].cost != 0 && !playerItems.count(*it)) {
 					it = playerItemsSelected.erase(it);
 				}
 				else {
@@ -3950,7 +4082,7 @@ namespace Mod::Pop::PopMgr_Extensions
 			state.m_BoughtLoadoutItemsCheckpoint[steamid] = playerItems;
 		});
 	}
-	
+
 	class PlayerLoadoutUpdatedListener : public IBitBufUserMessageListener
 	{
 	public:
@@ -3971,6 +4103,74 @@ namespace Mod::Pop::PopMgr_Extensions
 			}
 		}
 	};
+
+	inline void OverrideParticle(char const *&name)
+	{
+		if (!state.m_ParticleOverride.empty()) {
+			auto find = state.m_ParticleOverride.find(name);
+			if (find != state.m_ParticleOverride.end()) {
+				name = find->second.c_str();
+			}
+		}
+	}
+
+	DETOUR_DECL_STATIC(void, DispatchParticleEffect_2, const char *pszParticleName, ParticleAttachment_t iAttachType, CBaseEntity *pEntity, int iAttachmentPoint, bool bResetAllParticlesOnEntity)
+	{
+		OverrideParticle(pszParticleName);
+		DETOUR_STATIC_CALL(DispatchParticleEffect_2)(pszParticleName, iAttachType, pEntity, iAttachmentPoint, bResetAllParticlesOnEntity);
+	}
+	
+	DETOUR_DECL_STATIC(void, DispatchParticleEffect_6, const char *pszParticleName, ParticleAttachment_t iAttachType, CBaseEntity *pEntity, const char *pszAttachmentName, Vector vecColor1, Vector vecColor2, bool bUseColors, bool bResetAllParticlesOnEntity)
+	{
+		OverrideParticle(pszParticleName);
+		DETOUR_STATIC_CALL(DispatchParticleEffect_6)(pszParticleName, iAttachType, pEntity, pszAttachmentName, vecColor1, vecColor2, bUseColors, bResetAllParticlesOnEntity);
+	}
+
+	DETOUR_DECL_STATIC(void, DispatchParticleEffect_3, const char *pszParticleName, Vector vecOrigin, QAngle vecAngles, CBaseEntity *pEntity)
+	{
+		OverrideParticle(pszParticleName);
+		DETOUR_STATIC_CALL(DispatchParticleEffect_3)(pszParticleName, vecOrigin, vecAngles, pEntity);
+	}
+
+	DETOUR_DECL_STATIC(void, DispatchParticleEffect_4, const char *pszParticleName, Vector vecOrigin, Vector vecStart, QAngle vecAngles, CBaseEntity *pEntity)
+	{
+		OverrideParticle(pszParticleName);
+		DETOUR_STATIC_CALL(DispatchParticleEffect_4)(pszParticleName, vecOrigin, vecStart, vecAngles, pEntity);
+	}
+
+	DETOUR_DECL_STATIC(void, DispatchParticleEffect_7, const char *pszParticleName, Vector vecOrigin, QAngle vecAngles, Vector vecColor1, Vector vecColor2, bool bUseColors, CBaseEntity *pEntity, ParticleAttachment_t iAttachType)
+	{
+		OverrideParticle(pszParticleName);
+		DETOUR_STATIC_CALL(DispatchParticleEffect_7)(pszParticleName, vecOrigin, vecAngles, vecColor1, vecColor2, bUseColors, pEntity, iAttachType);
+	}
+
+	DETOUR_DECL_MEMBER(void, CBaseObject_StartBuilding, CBaseEntity *builder)
+	{
+		DETOUR_MEMBER_CALL(CBaseObject_StartBuilding)(builder);
+		auto obj = reinterpret_cast<CBaseObject *>(this);
+		CTFPlayer *owner = obj->GetBuilder();
+		if (owner != nullptr) {
+			for (auto &entry : state.m_BuildingPointTemplates) {
+				if (entry.building_type == obj->GetType() && entry.building_mode == obj->GetObjectMode() && (entry.allow_bots || !owner->IsBot())) {
+
+					// If item entry is invalid, always spawn the building template
+					
+					bool found = !entry.entry;
+					if (!found) {
+						ForEachTFPlayerEconEntity(owner, [&](CEconEntity *entity) {
+							if (entry.entry->Matches(entity->GetClassname(), entity->GetItem())) {
+								found = true;
+							}
+						});
+					}
+					
+					if (found) {
+						entry.info.SpawnTemplate(obj);
+					}
+				}
+			}
+		}
+	}
 
 	// DETOUR_DECL_STATIC(void, MessageWriteString,const char *name)
 	// {
@@ -4038,18 +4238,10 @@ namespace Mod::Pop::PopMgr_Extensions
 	void Parse_PlayerItemEquipSpawnTemplate(WeaponPointTemplateInfo &info, KeyValues *kv) {
 		info.info = Parse_SpawnTemplate(kv);
 		FOR_EACH_SUBKEY(kv, subkey) {
-			if (FStrEq(subkey->GetName(), "Classname")) {
-				DevMsg("PlayerItemEquipSpawnTemplate: Add Classname entry: \"%s\"\n", subkey->GetString());
-				info.weapons.push_back(std::make_unique<ItemListEntry_Classname>(subkey->GetString()));
-			} else if (FStrEq(subkey->GetName(), "ItemName")) {
-				DevMsg("PlayerItemEquipSpawnTemplate: Add Name entry: \"%s\"\n", subkey->GetString());
-				info.weapons.push_back(std::make_unique<ItemListEntry_Name>(subkey->GetString()));
-			} else if (FStrEq(subkey->GetName(), "DefIndex")) {
-				DevMsg("PlayerItemEquipSpawnTemplate: Add DefIndex entry: %d\n", subkey->GetInt());
-				info.weapons.push_back(std::make_unique<ItemListEntry_DefIndex>(subkey->GetInt()));
-			} else if (FStrEq(subkey->GetName(), "ItemSlot")) {
-				DevMsg("PlayerItemEquipSpawnTemplate: Add ItemSlot entry: %s\n", subkey->GetString());
-				info.weapons.push_back(std::make_unique<ItemListEntry_ItemSlot>(subkey->GetString()));
+			if (!FStrEq(subkey->GetName(), "Name")) {
+				auto entry = Parse_ItemListEntry(subkey,"ItemEquipSpawnTemplate", false);
+				if (entry)
+					info.weapons.push_back(std::move(entry));
 			}
 		}
 		return;
@@ -4094,6 +4286,43 @@ namespace Mod::Pop::PopMgr_Extensions
 			}
 			
 		}
+	}
+
+	void Parse_PlayerBuildingSpawnTemplate(KeyValues *kv) {
+		BuildingPointTemplateInfo info;
+		info.info = Parse_SpawnTemplate(kv);
+		FOR_EACH_SUBKEY(kv, subkey) {
+			if (FStrEq(subkey->GetName(), "BuildingType")) {
+				auto buildingName = subkey->GetString();
+				
+				if (FStrEq(buildingName, "Sentry")) {
+					info.building_type = OBJ_SENTRYGUN;
+				}
+				else if (FStrEq(buildingName, "Dispenser")) {
+					info.building_type = OBJ_DISPENSER;
+				}
+				else if (FStrEq(buildingName, "Teleporter Entry")) {
+					info.building_type = OBJ_TELEPORTER;
+				}
+				else if (FStrEq(buildingName, "Teleporter Exit")) {
+					info.building_type = OBJ_TELEPORTER;
+					info.building_mode = 1;
+				}
+				else if (FStrEq(buildingName, "Sapper")) {
+					info.building_type = OBJ_ATTACHMENT_SAPPER;
+				}
+			}
+			else if (FStrEq(subkey->GetName(), "AllowBots")) {
+				info.allow_bots = subkey->GetBool();
+			}
+			else if (!FStrEq(subkey->GetName(), "Name")) {
+				auto entry = Parse_ItemListEntry(subkey,"BuildingSpawnTemplate", false);
+				if (entry) {
+					info.entry = std::move(entry);
+				}
+			}
+		}
+		state.m_BuildingPointTemplates.push_back(std::move(info));
 	}
 
 	void Parse_ExtraLoadoutItemsClass(KeyValues *subkey2, int classname)
@@ -4181,7 +4410,7 @@ namespace Mod::Pop::PopMgr_Extensions
 					if (state.m_DisallowedClasses[i] != 0 && subkey->GetInt() == 0) {
 						amount_classes_blacklisted+=1;
 					}
-					state.m_DisallowedClasses[i]=subkey->GetInt();
+					state.m_DisallowedClasses[i]= subkey->GetInt();
 					
 					break;
 				}
@@ -4711,6 +4940,23 @@ namespace Mod::Pop::PopMgr_Extensions
 		}
 	}
 
+	void Parse_HandModelOverride(KeyValues *kv)
+	{
+		FOR_EACH_SUBKEY(kv, subkey) {
+			int classname = 0;
+			for(int i=1; i < 11; i++){
+				if(FStrEq(g_aRawPlayerClassNames[i],subkey->GetName())){
+					classname=i;
+					break;
+				}
+			}
+			if (classname != 0) {
+				state.m_HandModelOverride[classname] = subkey->GetString();
+				CBaseEntity::PrecacheModel(subkey->GetString());
+			}
+		}
+	}
+
 	/*void Parse_SprayDecal(KeyValues *kv)
 	{
 		if (state.m_SprayDecals.size() >= 22) {
@@ -4903,11 +5149,7 @@ namespace Mod::Pop::PopMgr_Extensions
 			ResetMaxTotalPlayers(10);
 		}
 
-		// Reset nav mesh
-		if (state.m_CustomNavFile != "") {
-			TheNavMesh->Load();
-		}
-
+		std::string prevNavFile = state.m_CustomNavFile;
 		state.Reset();
 		
 	//	Redirects parsing errors to the client
@@ -4919,6 +5161,28 @@ namespace Mod::Pop::PopMgr_Extensions
 		
 		SCOPED_INCREMENT(rc_CPopulationManager_Parse);
 		bool ret = DETOUR_MEMBER_CALL(CPopulationManager_Parse)();
+
+		// Reset nav mesh
+		if (state.m_CustomNavFile != prevNavFile) {
+			
+			string_t oldMapName = gpGlobals->mapname;
+			if (!state.m_CustomNavFile.empty()) {
+
+				if (!filesystem->FileExists(CFmtStr("maps/%s.nav", state.m_CustomNavFile.c_str()))) {
+					Warning("The custom nav file %s might not exist\n", state.m_CustomNavFile.c_str());
+				}
+			}
+
+			ForEachEntityByRTTI<CBaseCombatCharacter>([&](CBaseCombatCharacter *character) {
+				character->ClearLastKnownArea();
+			});
+
+			if (!state.m_CustomNavFile.empty()) {
+				gpGlobals->mapname = AllocPooledString(state.m_CustomNavFile.c_str());
+			}
+			TheNavMesh->Load();
+			gpGlobals->mapname = oldMapName;
+		}
 
 		if (cvar_parse_errors.GetBool())
 			SpewOutputFunc(LocalSpewOutputFunc);
@@ -5250,6 +5514,8 @@ namespace Mod::Pop::PopMgr_Extensions
 					Parse_ForceItem(subkey, state.m_ForceItems, false);
 				} else if (FStrEq(name, "ForceItemNoRemove")) {
 					Parse_ForceItem(subkey, state.m_ForceItems, true);
+				} else if (FStrEq(name, "HandModelOverride")) {
+					Parse_HandModelOverride(subkey);
 				}/* else if (FStrEq(name, "ExtendedUpgrades")) {
 					Mod::MvM::Extended_Upgrades::Parse_ExtendedUpgrades(subkey);
 				}*/ else if (FStrEq(name, "SpawnTemplate")) {
@@ -5324,21 +5590,34 @@ namespace Mod::Pop::PopMgr_Extensions
 				} else if (FStrEq(name, "UpgradeStationKeepWeapons")) {
 					state.m_UpgradeStationRegenCreators.Set(!subkey->GetBool());
 					state.m_UpgradeStationRegen.Set(subkey->GetBool());
+				} else if (FStrEq(name, "AllowBluPlayerReanimators")) {
+					state.m_AllowBluePlayerReanimators.Set(subkey->GetBool());
 				} else if (FStrEq(name, "CustomNavFile")) {
 					char strippedFile[128];
 					V_StripExtension(subkey->GetString(), strippedFile, sizeof(strippedFile));
 					state.m_CustomNavFile = strippedFile;
-					string_t oldMapName = gpGlobals->mapname;
-					
-					if (!filesystem->FileExists(CFmtStr("maps/%s.nav", strippedFile))) {
-						Msg("The custom nav file %s might not exist\n", strippedFile);
-					}
-					gpGlobals->mapname = AllocPooledString(strippedFile);
-					TheNavMesh->Load();
-					gpGlobals->mapname = oldMapName;
-
 				// } else if (FStrEq(name, "SprayDecal")) {
 				// 	Parse_SprayDecal(subkey);
+				
+				} else if (FStrEq(name, "ScriptSoundOverrides") || FStrEq(name, "CustomScriptSoundFile")) {
+					if (!filesystem->FileExists(subkey->GetString())) {
+						Warning("The custom sound script file %s might not exist\n", subkey->GetString());
+					}
+					soundemitterbase->AddSoundOverrides(subkey->GetString(), true);
+					KeyValues *kvsnd = new KeyValues( "" );
+					
+					if (kvsnd->LoadFromFile(filesystem, subkey->GetString())) {
+						for (KeyValues *pKeys = kvsnd; pKeys != nullptr; pKeys = pKeys->GetNextKey()) {
+							CBaseEntity::PrecacheScriptSound(pKeys->GetName());
+						}
+					}
+					kvsnd->deleteThis();
+				} else if (FStrEq(name, "OverrideParticles")) {
+					FOR_EACH_SUBKEY(subkey, subkey2) {
+						state.m_ParticleOverride[subkey2->GetName()] = subkey2->GetString();
+					}
+				} else if (FStrEq(name, "BuildingSpawnTemplate")) {
+					Parse_PlayerBuildingSpawnTemplate(subkey);
 				} else if (FStrEq(name, "PrecacheScriptSound"))  { CBaseEntity::PrecacheScriptSound (subkey->GetString());
 				} else if (FStrEq(name, "PrecacheSound"))        { enginesound->PrecacheSound       (subkey->GetString(), false);
 				} else if (FStrEq(name, "PrecacheModel"))        { engine     ->PrecacheModel       (subkey->GetString(), false);
@@ -5538,9 +5817,9 @@ namespace Mod::Pop::PopMgr_Extensions
 
 			MOD_ADD_DETOUR_MEMBER(CPopulationManager_AdjustMinPlayerSpawnTime, "CPopulationManager::AdjustMinPlayerSpawnTime");
 
-			//MOD_ADD_DETOUR_MEMBER(CTFBot_GetNearestKnownSappableTarget, "CTFBot::GetNearestKnownSappableTarget");
+			MOD_ADD_DETOUR_MEMBER(CTFBot_GetNearestKnownSappableTarget, "CTFBot::GetNearestKnownSappableTarget");
 			//MOD_ADD_DETOUR_MEMBER(IVision_IsAbleToSee, "IVision::IsAbleToSee");
-			MOD_ADD_DETOUR_MEMBER(IVision_IsAbleToSee2, "IVision::IsAbleToSee2");
+			MOD_ADD_DETOUR_MEMBER(CTFBotVision_IsIgnored, "CTFBotVision::IsIgnored");
 			MOD_ADD_DETOUR_MEMBER(IGameEventManager2_FireEvent, "IGameEventManager2::FireEvent");
 			MOD_ADD_DETOUR_MEMBER(CTeamplayRoundBasedRules_GetMinTimeWhenPlayerMaySpawn, "CTeamplayRoundBasedRules::GetMinTimeWhenPlayerMaySpawn");
 
@@ -5599,6 +5878,19 @@ namespace Mod::Pop::PopMgr_Extensions
 			MOD_ADD_DETOUR_MEMBER(CPopulationManager_SetCheckpoint, "CPopulationManager::SetCheckpoint");
 			MOD_ADD_DETOUR_MEMBER(CTFPlayer_GetEntityForLoadoutSlot, "CTFPlayer::GetEntityForLoadoutSlot");
             MOD_ADD_DETOUR_MEMBER(CTFPlayerSharedUtils_GetEconItemViewByLoadoutSlot, "CTFPlayerSharedUtils::GetEconItemViewByLoadoutSlot");
+			
+            //MOD_ADD_DETOUR_MEMBER(CTFWeaponBase_UpdateHands, "CTFWeaponBase::UpdateHands");
+            //MOD_ADD_DETOUR_MEMBER(CBaseCombatWeapon_SetViewModel, "CBaseCombatWeapon::SetViewModel");
+            MOD_ADD_DETOUR_MEMBER(CTFPlayerClassShared_GetHandModelName, "CTFPlayerClassShared::GetHandModelName");
+            //MOD_ADD_DETOUR_MEMBER(CTFBotSpyInfiltrate_Update, "CTFBotSpyInfiltrate::Update");
+
+            MOD_ADD_DETOUR_STATIC(DispatchParticleEffect_2, "DispatchParticleEffect [overload 2]");
+            MOD_ADD_DETOUR_STATIC(DispatchParticleEffect_3, "DispatchParticleEffect [overload 3]");
+            MOD_ADD_DETOUR_STATIC(DispatchParticleEffect_4, "DispatchParticleEffect [overload 4]");
+            MOD_ADD_DETOUR_STATIC(DispatchParticleEffect_6, "DispatchParticleEffect [overload 6]");
+            MOD_ADD_DETOUR_STATIC(DispatchParticleEffect_7, "DispatchParticleEffect [overload 7]");
+            MOD_ADD_DETOUR_MEMBER(CBaseObject_StartBuilding, "CBaseObject::StartBuilding");
+			
 			
 			// Remove banned missions from the list
 			MOD_ADD_DETOUR_STATIC(CPopulationManager_FindDefaultPopulationFileShortNames, "CPopulationManager::FindDefaultPopulationFileShortNames");

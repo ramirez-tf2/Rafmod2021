@@ -1460,6 +1460,29 @@ namespace Mod::Util::Client_Cmds
 		}
 		
 	}
+	
+	void CC_ClientCvar(CTFPlayer *player, const CCommand& args)
+	{
+		ClientMsg(player, "Command %d\n", args.ArgC());
+		if (args.ArgC() == 2) {
+			ClientMsg(player, "%s\n", engine->GetClientConVarValue(ENTINDEX(player), args[1]));
+		}
+	}
+
+	void CC_DropMarker(CTFPlayer *player, const CCommand& args)
+	{
+		if (args.ArgC() < 2) return;
+
+		std::vector<CBasePlayer *> vec;
+		GetSMTargets(player, args[1], vec);
+		if (vec.empty()) {
+			return;
+		}
+		std::string displaystr;
+		for (CBasePlayer *target : vec) {
+			CTFReviveMarker::Create(ToTFPlayer(target));
+		}
+	}
 
 	// TODO: use an std::unordered_map so we don't have to do any V_stricmp's at all for lookups
 	// (also make this change in Util:Make_Item)
@@ -1488,6 +1511,8 @@ namespace Mod::Util::Client_Cmds
 		{ "sig_sprays",           CC_Sprays           },
 		{ "sig_vehicle",          CC_Vehicle          },
 		{ "sig_playscene",        CC_PlayScene        },
+		{ "sig_getclientcvar",    CC_ClientCvar       },
+		{ "sig_dropmarker",       CC_DropMarker       },
 	};
 
 	
@@ -1564,7 +1589,7 @@ namespace Mod::Util::Client_Cmds
 						}
 						it = modelmap.erase(it);
 						amount++;
-						if (amount >= 100) {
+						if (amount >= 10) {
 							break;
 						}
 					}

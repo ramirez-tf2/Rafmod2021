@@ -97,6 +97,10 @@ public:
 	// 49b?
 	// 49c float 0.0f
 	// 4a0 byte, probably: have we landed on the ground
+	static CTFReviveMarker *Create(CTFPlayer *player) { return ft_Create(player); }
+
+private:
+	static StaticFuncThunk<CTFReviveMarker *, CTFPlayer *> ft_Create;
 };
 
 
@@ -140,16 +144,25 @@ private:
 class CTFWearable : public CEconWearable, public IHasGenericMeter
 {
 public:
-	DECL_SENDPROP(CHandle<CBaseEntity *>, m_hWeaponAssociatedWith);
+	DECL_SENDPROP(CHandle<CBaseEntity>, m_hWeaponAssociatedWith);
+	DECL_SENDPROP(bool, m_bDisguiseWearable);
 };
 
-class CTFWearableDemoShield : public CTFWearable {};
 class CTFWearableRobotArm   : public CTFWearable {};
 class CTFWearableRazorback  : public CTFWearable {};
 class CTFPowerupBottle      : public CTFWearable {
 	
 public:
 	DECL_SENDPROP(int, m_usNumCharges);
+};
+class CTFWearableDemoShield : public CTFWearable {
+public:
+	void DoSpecialAction(CTFPlayer *player)  { ft_DoSpecialAction       (this, player); }
+	void EndSpecialAction(CTFPlayer *player) { ft_EndSpecialAction      (this, player); }
+
+private:
+	static MemberFuncThunk<CTFWearableDemoShield *, void, CTFPlayer *> ft_DoSpecialAction;
+	static MemberFuncThunk<CTFWearableDemoShield *, void, CTFPlayer *> ft_EndSpecialAction;
 };
 
 
